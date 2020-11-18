@@ -554,8 +554,8 @@ static int mali_probe(struct platform_device *pdev)
 		MALI_DEBUG_PRINT(3, ("OPP table not found\n"));
 #endif
 
-	/* Need to name the gpu clock "core" in the device tree */
-	mdev->clock = clk_get(mdev->dev, "core");
+	/* Need to name the gpu clock "clk_mali" in the device tree */
+	mdev->clock = clk_get(mdev->dev, "clk_mali");
 	if (IS_ERR_OR_NULL(mdev->clock)) {
 		MALI_DEBUG_PRINT(2, ("Continuing without Mali clock control\n"));
 		mdev->clock = NULL;
@@ -1125,6 +1125,17 @@ static int mali_ioctl(struct inode *inode, struct file *filp, unsigned int cmd, 
 	return err;
 }
 
+/*
+ * From 4.20.0 kernel vm_insert_pfn was dropped
+ * Make wrapper to preserve compatibility
+ */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)
+int vm_insert_pfn(struct vm_area_struct *vma, unsigned long addr,
+		  unsigned long pfn)
+{
+	return vm_fault_to_errno(vmf_insert_pfn(vma, addr, pfn), 0xffff);
+}
+#endif
 
 module_init(mali_module_init);
 module_exit(mali_module_exit);

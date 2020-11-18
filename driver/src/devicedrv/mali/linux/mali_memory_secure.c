@@ -13,12 +13,11 @@
 #include "mali_memory_secure.h"
 #include "mali_osk.h"
 #include <linux/mutex.h>
+#include <linux/dma-mapping.h>
+#include <linux/dma-buf.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 16, 0)
 #include <linux/dma-direct.h>
-#else
-#include <linux/dma-mapping.h>
 #endif
-#include <linux/dma-buf.h>
 
 _mali_osk_errcode_t mali_mem_secure_attach_dma_buf(mali_mem_secure *secure_mem, u32 size, int mem_fd)
 {
@@ -132,9 +131,9 @@ int mali_mem_secure_cpu_map(mali_mem_backend *mem_bkend, struct vm_area_struct *
 		MALI_DEBUG_ASSERT(0 == size % _MALI_OSK_MALI_PAGE_SIZE);
 
 		for (j = 0; j < size / _MALI_OSK_MALI_PAGE_SIZE; j++) {
-			ret = vmf_insert_pfn(vma, addr, PFN_DOWN(phys));
+			ret = vm_insert_pfn(vma, addr, PFN_DOWN(phys));
 
-			if (unlikely(ret & VM_FAULT_ERROR)) {
+			if (unlikely(0 != ret)) {
 				return -EFAULT;
 			}
 			addr += _MALI_OSK_MALI_PAGE_SIZE;

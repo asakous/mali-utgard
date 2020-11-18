@@ -33,6 +33,15 @@ struct mali {
 
 struct mali *mali;
 
+static bool mali_has_reset_line(struct device_node *np)
+{
+	return of_device_is_compatible(np, "allwinner,sun4i-a10-mali") ||
+		of_device_is_compatible(np, "allwinner,sun7i-a20-mali") ||
+		of_device_is_compatible(np, "allwinner,sun8i-h3-mali") ||
+		of_device_is_compatible(np, "allwinner,sun50i-a64-mali") ||
+		of_device_is_compatible(np, "allwinner,sun50i-h5-mali");
+}
+
 struct resource *mali_create_mp1_resources(unsigned long address,
 					   int irq_gp, int irq_gpmmu,
 					   int irq_pp0, int irq_ppmmu0,
@@ -81,22 +90,22 @@ struct resource *mali_create_mp2_resources(unsigned long address,
 	return res;
 }
 
-struct resource *mali_create_450mp4_resources(unsigned long address,
-					      int irq_gp, int irq_gpmmu,
-					      int irq_pp0, int irq_ppmmu0,
-					      int irq_pp1, int irq_ppmmu1,
-					      int irq_pp2, int irq_ppmmu2,
-					      int irq_pp3, int irq_ppmmu3,
-					      int irq_pp, int *len)
+struct resource *mali_create_mali450_mp4_resources(unsigned long address,
+						   int irq_gp, int irq_gpmmu,
+						   int irq_pp,
+						   int irq_pp0, int irq_ppmmu0,
+						   int irq_pp1, int irq_ppmmu1,
+						   int irq_pp2, int irq_ppmmu2,
+						   int irq_pp3, int irq_ppmmu3,
+						   int *len)
 {
 	struct resource target[] = {
-		MALI_GPU_RESOURCES_MALI450_MP4(address,
+		MALI_GPU_RESOURCES_MALI450_MP4_PMU(address,
 						   irq_gp, irq_gpmmu,
 						   irq_pp0, irq_ppmmu0,
 						   irq_pp1, irq_ppmmu1,
 						   irq_pp2, irq_ppmmu2,
-						   irq_pp3, irq_ppmmu3,
-						   irq_pp)
+						   irq_pp3, irq_ppmmu3, irq_pp)
 	};
 	struct resource *res;
 
@@ -117,33 +126,26 @@ static const struct of_device_id mali_dt_ids[] = {
 	{ .compatible = "allwinner,sun8i-h3-mali" },
 	{ .compatible = "allwinner,sun50i-a64-mali" },
 	{ .compatible = "allwinner,sun50i-h5-mali" },
-	{ .compatible = "arm,mali-400" },
-	{ .compatible = "arm,mali-450" },
 	{ /* sentinel */ },
 };
 MODULE_DEVICE_TABLE(of, mali_dt_ids);
 
-static struct mali_gpu_device_data mali_gpu_data = {
-	.max_job_runtime		= 60000,
-};
 int mali_platform_device_register(void)
 {
-	int irq_gp, irq_gpmmu;
+	struct mali_gpu_device_data mali_gpu_data = {
+		.fb_start		= 0,
+		.fb_size		= 0xfffff000,
+	};
+	int irq_gp, irq_gpmmu, irq_pp;
 	int irq_pp0, irq_ppmmu0;
 	int irq_pp1 = -EINVAL, irq_ppmmu1 = -EINVAL;
 	int irq_pp2 = -EINVAL, irq_ppmmu2 = -EINVAL;
 	int irq_pp3 = -EINVAL, irq_ppmmu3 = -EINVAL;
-	int irq_pp = -EINVAL;
 	int irq_pmu;
 	struct resource *mali_res = NULL, res;
 	struct device_node *np;
 	struct device *dev;
 	int ret, len;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,0,0)
-	mali_gpu_data.shared_mem_size = totalram_pages() * PAGE_SIZE;
-#else
-	mali_gpu_data.shared_mem_size = totalram_pages * PAGE_SIZE;
-#endif
 
 	np = of_find_matching_node(NULL, mali_dt_ids);
 	if (!np) {
@@ -179,11 +181,7 @@ int mali_platform_device_register(void)
 	}
 	clk_prepare_enable(mali->core_clk);
 
-	if (of_device_is_compatible(np, "allwinner,sun4i-a10-mali") ||
-	    of_device_is_compatible(np, "allwinner,sun7i-a20-mali") ||
-	    of_device_is_compatible(np, "allwinner,sun8i-h3-mali")  ||
-	    of_device_is_compatible(np, "allwinner,sun50i-a64-mali") ||
-	    of_device_is_compatible(np, "allwinner,sun50i-h5-mali")) {
+	if (mali_has_reset_line(np)) {
 		mali->reset = of_reset_control_get(np, NULL);
 		if (IS_ERR(mali->reset)) {
 			pr_err("Couldn't retrieve our reset handle\n");
@@ -203,6 +201,13 @@ int mali_platform_device_register(void)
 	if (irq_gp < 0) {
 		pr_err("Couldn't retrieve our GP interrupt\n");
 		ret = irq_gp;
+		goto err_put_reset;
+	}
+
+	irq_pp = of_irq_get_byname(np, "pp");
+	if (of_device_is_compatible(np, "arm,mali-450") && (irq_pp < 0)) {
+		pr_err("Couldn't retrieve our PP interrupt\n");
+		ret = irq_pp;
 		goto err_put_reset;
 	}
 
@@ -235,48 +240,27 @@ int mali_platform_device_register(void)
 		goto err_put_reset;
 	}
 
-	if (of_device_is_compatible(np, "allwinner,sun50i-h5-mali")) {
-		irq_pp2 = of_irq_get_byname(np, "pp2");
-		if (irq_pp2 < 0) {
-			pr_err("Couldn't retrieve our PP2 interrupt\n");
-			ret = irq_pp2;
-			goto err_put_reset;
-		}
+	irq_pp2 = of_irq_get_byname(np, "pp2");
+	irq_ppmmu2 = of_irq_get_byname(np, "ppmmu2");
+	if ((irq_pp2 < 0) ^ (irq_ppmmu2 < 0 )) {
+		pr_err("Couldn't retrieve our PP2 interrupts\n");
+		ret = (irq_pp2 < 0) ? irq_pp2 : irq_ppmmu2;
+		goto err_put_reset;
+	}
 
-		irq_ppmmu2 = of_irq_get_byname(np, "ppmmu2");
-		if (irq_ppmmu2 < 0) {
-			pr_err("Couldn't retrieve our PP2 interrupts\n");
-			ret = irq_ppmmu2;
-			goto err_put_reset;
-		}
+	irq_pp3 = of_irq_get_byname(np, "pp3");
+	irq_ppmmu3 = of_irq_get_byname(np, "ppmmu3");
+	if ((irq_pp3 < 0) ^ (irq_ppmmu3 < 0 )) {
+		pr_err("Couldn't retrieve our PP3 interrupts\n");
+		ret = (irq_pp3 < 0) ? irq_pp3 : irq_ppmmu3;
+		goto err_put_reset;
+	}
 
-		irq_pp3 = of_irq_get_byname(np, "pp3");
-		if (irq_pp3 < 0) {
-			pr_err("Couldn't retrieve our PP3 interrupt\n");
-			ret = irq_pp3;
-			goto err_put_reset;
-		}
-
-		irq_ppmmu3 = of_irq_get_byname(np, "ppmmu3");
-		if (irq_ppmmu3 < 0) {
-			pr_err("Couldn't retrieve our PP3 interrupts\n");
-			ret = irq_ppmmu3;
-			goto err_put_reset;
-		}
-
-		irq_pp = of_irq_get_byname(np, "pp");
-		if (irq_pp < 0) {
-			pr_err("Couldn't retrieve our PP broadcast interrupt\n");
-			ret = irq_pp;
-			goto err_put_reset;
-		}
-	} else {
-		irq_pmu = of_irq_get_byname(np, "pmu");
-		if (irq_pmu < 0) {
-			pr_err("Couldn't retrieve our PMU interrupt\n");
-			ret = irq_pmu;
-			goto err_put_reset;
-		}
+	irq_pmu = of_irq_get_byname(np, "pmu");
+	if (irq_pmu < 0) {
+		pr_err("Couldn't retrieve our PMU interrupt\n");
+		ret = irq_pmu;
+		goto err_put_reset;
 	}
 
 	mali->dev = platform_device_alloc("mali-utgard", 0);
@@ -288,8 +272,8 @@ int mali_platform_device_register(void)
 	dev = &mali->dev->dev;
 	dev_set_name(dev, "mali-utgard");
 	dev->of_node = np;
-	dev->coherent_dma_mask = DMA_BIT_MASK(32);
 	dev->dma_mask = &dev->coherent_dma_mask;
+	dev->coherent_dma_mask = DMA_BIT_MASK(32);
 	dev->bus = &platform_bus_type;
 
 	ret = of_reserved_mem_device_init(&mali->dev->dev);
@@ -298,14 +282,18 @@ int mali_platform_device_register(void)
 		goto err_free_mem_region;
 	}
 
-	if (of_device_is_compatible(np, "allwinner,sun50i-h5-mali"))
-		mali_res = mali_create_450mp4_resources(res.start,
-							irq_gp, irq_gpmmu,
-							irq_pp0, irq_ppmmu0,
-							irq_pp1, irq_ppmmu1,
-							irq_pp2, irq_ppmmu2,
-							irq_pp3, irq_ppmmu3,
-							irq_pp, &len);
+	if (of_device_is_compatible(np, "arm,mali-450") &&
+	    (irq_pp >= 0) &&
+	    (irq_pp2 >= 0) && (irq_ppmmu2 >= 0) &&
+	    (irq_pp3 >= 0) && (irq_ppmmu3 >= 0))
+		mali_res = mali_create_mali450_mp4_resources(res.start,
+							     irq_gp, irq_gpmmu,
+							     irq_pp,
+							     irq_pp0, irq_ppmmu0,
+							     irq_pp1, irq_ppmmu1,
+							     irq_pp2, irq_ppmmu2,
+							     irq_pp3, irq_ppmmu3,
+							     &len);
 	else if ((irq_pp1 >= 0) && (irq_ppmmu1 >= 0))
 		mali_res = mali_create_mp2_resources(res.start,
 						     irq_gp, irq_gpmmu,
@@ -323,6 +311,15 @@ int mali_platform_device_register(void)
 		ret = -EINVAL;
 		goto err_free_mem_region;
 	}
+
+	if (of_device_is_compatible(np, "allwinner,sun8i-h3-mali") ||
+	    of_device_is_compatible(np, "allwinner,sun50i-h5-mali"))
+		clk_set_rate(mali->core_clk, 576000000);
+	else if (of_device_is_compatible(np, "allwinner,sun7i-a20-mali") ||
+		 of_device_is_compatible(np, "allwinner,sun8i-a23-mali"))
+		clk_set_rate(mali->core_clk, 384000000);
+	else if (of_device_is_compatible(np, "allwinner,sun50i-a64-mali"))
+		clk_set_rate(mali->core_clk, 432000000);
 
 	clk_register_clkdev(mali->core_clk, "clk_mali", NULL);
 

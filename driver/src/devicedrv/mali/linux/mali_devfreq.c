@@ -63,23 +63,13 @@ mali_devfreq_target(struct device *dev, unsigned long *target_freq, u32 flags)
 	if (mdev->current_freq == freq) {
 		*target_freq = freq;
 		mali_pm_reset_dvfs_utilisation(mdev);
-#ifdef CONFIG_REGULATOR
-		if (mdev->regulator && mdev->current_voltage != voltage) {
-			err = regulator_set_voltage(mdev->regulator, voltage, INT_MAX);
-			if (err) {
-				MALI_PRINT_ERROR(("Failed to set voltage (%d)\n", err));
-				return err;
-			}
-			mdev->current_voltage = voltage;
-		}
-#endif
 		return 0;
 	}
 
 #ifdef CONFIG_REGULATOR
 	if (mdev->regulator && mdev->current_voltage != voltage
 	    && mdev->current_freq < freq) {
-		err = regulator_set_voltage(mdev->regulator, voltage, INT_MAX);
+		err = regulator_set_voltage(mdev->regulator, voltage, voltage);
 		if (err) {
 			MALI_PRINT_ERROR(("Failed to increase voltage (%d)\n", err));
 			return err;
@@ -96,7 +86,7 @@ mali_devfreq_target(struct device *dev, unsigned long *target_freq, u32 flags)
 #ifdef CONFIG_REGULATOR
 	if (mdev->regulator && mdev->current_voltage != voltage
 	    && mdev->current_freq > freq) {
-		err = regulator_set_voltage(mdev->regulator, voltage, INT_MAX);
+		err = regulator_set_voltage(mdev->regulator, voltage, voltage);
 		if (err) {
 			MALI_PRINT_ERROR(("Failed to decrease voltage (%d)\n", err));
 			return err;
@@ -232,10 +222,6 @@ int mali_devfreq_init(struct mali_device *mdev)
 		return -ENODEV;
 
 	mdev->current_freq = clk_get_rate(mdev->clock);
-#ifdef CONFIG_REGULATOR
-	if (mdev->regulator)
-		mdev->current_voltage = regulator_get_voltage(mdev->regulator);
-#endif
 
 	dp = &mdev->devfreq_profile;
 
@@ -246,8 +232,11 @@ int mali_devfreq_init(struct mali_device *mdev)
 	dp->get_cur_freq = mali_devfreq_cur_freq;
 	dp->exit = mali_devfreq_exit;
 
-	if (mali_devfreq_init_freq_table(mdev, dp))
-		return -EFAULT;
+	err = mali_devfreq_init_freq_table(mdev, dp);
+	if (err == -ENODEV)
+		return 0;
+	else
+		return err;
 
 	mdev->devfreq = devfreq_add_device(mdev->dev, dp,
 					   "simple_ondemand", NULL);
@@ -270,21 +259,20 @@ int mali_devfreq_init(struct mali_device *mdev)
 		if (NULL != data.gpu_cooling_ops) {
 			callbacks = data.gpu_cooling_ops;
 			MALI_DEBUG_PRINT(2, ("Mali GPU Thermal: Callback handler installed \n"));
+		} else {
+			MALI_PRINT(("Mali GPU Thermal: No power callbacks\n"));
 		}
 	}
 
-	if (callbacks) {
-		mdev->devfreq_cooling = of_devfreq_cooling_register_power(
-						mdev->dev->of_node,
-						mdev->devfreq,
-						callbacks);
-		if (IS_ERR_OR_NULL(mdev->devfreq_cooling)) {
-			err = PTR_ERR(mdev->devfreq_cooling);
-			MALI_PRINT_ERROR(("Failed to register cooling device (%d)\n", err));
-			goto cooling_failed;
-		} else {
-			MALI_DEBUG_PRINT(2, ("Mali GPU Thermal Cooling installed \n"));
-		}
+	mdev->devfreq_cooling = of_devfreq_cooling_register_power(mdev->dev->of_node,
+								  mdev->devfreq,
+								  callbacks);
+	if (IS_ERR_OR_NULL(mdev->devfreq_cooling)) {
+		err = PTR_ERR(mdev->devfreq_cooling);
+		MALI_PRINT_ERROR(("Failed to register cooling device (%d)\n", err));
+		goto cooling_failed;
+	} else {
+		MALI_DEBUG_PRINT(2, ("Mali GPU Thermal Cooling installed \n"));
 	}
 #endif
 

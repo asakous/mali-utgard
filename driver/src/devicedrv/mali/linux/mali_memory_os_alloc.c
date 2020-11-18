@@ -202,12 +202,10 @@ int mali_mem_os_alloc_pages(mali_mem_os_mem *os_mem, u32 size)
 	/* Allocate new pages, if needed. */
 	for (i = 0; i < remaining; i++) {
 		dma_addr_t dma_addr;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
 		gfp_t flags = __GFP_ZERO | __GFP_RETRY_MAYFAIL | __GFP_NOWARN;
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
-		gfp_t flags = __GFP_ZERO | __GFP_RETRY_MAYFAIL | __GFP_NOWARN | __GFP_COLD;
 #else
-		gfp_t flags = __GFP_ZERO | __GFP_REPEAT | __GFP_NOWARN | __GFP_COLD;
+		gfp_t flags = __GFP_ZERO | __GFP_REPEAT | __GFP_NOWARN;
 #endif
 		int err;
 
@@ -376,9 +374,9 @@ int mali_mem_os_cpu_map(mali_mem_backend *mem_bkend, struct vm_area_struct *vma)
 		ret = vm_insert_page(vma, addr, page);
 		*/
 		page = m_page->page;
-		ret = vmf_insert_pfn(vma, addr, page_to_pfn(page));
+		ret = vm_insert_pfn(vma, addr, page_to_pfn(page));
 
-		if (unlikely(ret & VM_FAULT_ERROR)) {
+		if (unlikely(0 != ret)) {
 			return -EFAULT;
 		}
 		addr += _MALI_OSK_MALI_PAGE_SIZE;
@@ -414,11 +412,16 @@ _mali_osk_errcode_t mali_mem_os_resize_cpu_map_locked(mali_mem_backend *mem_bken
 
 			vm_end -= _MALI_OSK_MALI_PAGE_SIZE;
 			if (mapping_page_num > 0) {
-				ret = vmf_insert_pfn(vma, vm_end, page_to_pfn(m_page->page));
+				ret = vm_insert_pfn(vma, vm_end, page_to_pfn(m_page->page));
 
-				if (unlikely(ret & VM_FAULT_ERROR)) {
-					MALI_DEBUG_PRINT(1, ("OS Mem: mali_mem_os_resize_cpu_map_locked failed, ret = %d, offset is %d,page_count is %d\n",
-							     ret,  offset + mapping_page_num, os_mem->count));
+				if (unlikely(0 != ret)) {
+					/*will return -EBUSY If the page has already been mapped into table, but it's OK*/
+					if (-EBUSY == ret) {
+						break;
+					} else {
+						MALI_DEBUG_PRINT(1, ("OS Mem: mali_mem_os_resize_cpu_map_locked failed, ret = %d, offset is %d,page_count is %d\n",
+								     ret,  offset + mapping_page_num, os_mem->count));
+					}
 					return _MALI_OSK_ERR_FAULT;
 				}
 			} else {
@@ -432,11 +435,16 @@ _mali_osk_errcode_t mali_mem_os_resize_cpu_map_locked(mali_mem_backend *mem_bken
 		list_for_each_entry(m_page, &os_mem->pages, list) {
 			if (count >= offset) {
 
-				ret = vmf_insert_pfn(vma, vstart, page_to_pfn(m_page->page));
+				ret = vm_insert_pfn(vma, vstart, page_to_pfn(m_page->page));
 
-				if (unlikely(ret & VM_FAULT_ERROR)) {
-					MALI_DEBUG_PRINT(1, ("OS Mem: mali_mem_os_resize_cpu_map_locked failed, ret = %d, count is %d, offset is %d,page_count is %d\n",
-							     ret, count, offset, os_mem->count));
+				if (unlikely(0 != ret)) {
+					/*will return -EBUSY If the page has already been mapped into table, but it's OK*/
+					if (-EBUSY == ret) {
+						break;
+					} else {
+						MALI_DEBUG_PRINT(1, ("OS Mem: mali_mem_os_resize_cpu_map_locked failed, ret = %d, count is %d, offset is %d,page_count is %d\n",
+								     ret, count, offset, os_mem->count));
+					}
 					return _MALI_OSK_ERR_FAULT;
 				}
 			}
