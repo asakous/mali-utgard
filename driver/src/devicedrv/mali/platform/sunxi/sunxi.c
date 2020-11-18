@@ -256,12 +256,12 @@ int mali_platform_device_register(void)
 		goto err_put_reset;
 	}
 
-	irq_pmu = of_irq_get_byname(np, "pmu");
+	/*irq_pmu = of_irq_get_byname(np, "pmu");
 	if (irq_pmu < 0) {
 		pr_err("Couldn't retrieve our PMU interrupt\n");
 		ret = irq_pmu;
 		goto err_put_reset;
-	}
+	}*/
 
 	mali->dev = platform_device_alloc("mali-utgard", 0);
 	if (!mali->dev) {
