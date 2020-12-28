@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2014, 2016-2018 ARM Limited. All rights reserved.
+ * Copyright (C) 2010-2014, 2016 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -12,12 +12,8 @@
  * @file ump_ukk_wrappers.c
  * Defines the wrapper functions which turn Linux IOCTL calls into _ukk_ calls
  */
-#include <linux/version.h>
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,12,0)
-#include <linux/uaccess.h>
-#else
-#include <asm/uaccess.h>
-#endif
+
+#include <asm/uaccess.h>             /* user space access */
 
 #include "ump_osk.h"
 #include "ump_uk_types.h"

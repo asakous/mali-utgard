@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2018 ARM Limited. All rights reserved.
+ * Copyright (C) 2012-2016 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -713,7 +713,7 @@ void mali_scheduler_abort_session(struct mali_session_data *session)
 		mali_gp_job_signal_pp_tracker(gp_job, MALI_FALSE);
 		_mali_osk_list_delinit(&gp_job->list);
 		mali_scheduler_complete_gp_job(gp_job,
-					       MALI_FALSE, MALI_TRUE, MALI_TRUE);
+					       MALI_FALSE, MALI_FALSE, MALI_TRUE);
 	}
 
 	/* Release and complete non-running PP jobs */
@@ -722,7 +722,7 @@ void mali_scheduler_abort_session(struct mali_session_data *session)
 		mali_timeline_tracker_release(mali_pp_job_get_tracker(pp_job));
 		_mali_osk_list_delinit(&pp_job->list);
 		mali_scheduler_complete_pp_job(pp_job, 0,
-					       MALI_TRUE, MALI_TRUE);
+					       MALI_FALSE, MALI_TRUE);
 	}
 }
 

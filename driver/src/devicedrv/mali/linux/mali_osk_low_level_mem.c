@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2014, 2018 ARM Limited. All rights reserved.
+ * Copyright (C) 2010-2014, 2016 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -33,7 +33,7 @@ void _mali_osk_write_mem_barrier(void)
 
 mali_io_address _mali_osk_mem_mapioregion(uintptr_t phys, u32 size, const char *description)
 {
-	return (mali_io_address)ioremap(phys, size);
+	return (mali_io_address)ioremap_nocache(phys, size);
 }
 
 void _mali_osk_mem_unmapioregion(uintptr_t phys, u32 size, mali_io_address virt)

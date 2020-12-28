@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2016, 2018 ARM Limited. All rights reserved.
+ * Copyright (C) 2013-2016 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -683,13 +683,13 @@ void _mali_mem_cow_copy_page(mali_page_node *src_node, mali_page_node *dst_node)
 		/*
 		* use ioremap to map src for BLOCK memory
 		*/
-		src = ioremap(_mali_page_node_get_dma_addr(src_node), _MALI_OSK_MALI_PAGE_SIZE);
+		src = ioremap_nocache(_mali_page_node_get_dma_addr(src_node), _MALI_OSK_MALI_PAGE_SIZE);
 		memcpy(dst, src , _MALI_OSK_MALI_PAGE_SIZE);
 		iounmap(src);
 	}
 	kunmap_atomic(dst);
 	dma_addr = dma_map_page(&mali_platform_device->dev, dst_page,
-				0, _MALI_OSK_MALI_PAGE_SIZE, DMA_BIDIRECTIONAL);
+				0, _MALI_OSK_MALI_PAGE_SIZE, DMA_TO_DEVICE);
 
 	if (dst_node->type == MALI_PAGE_NODE_SWAP) {
 		dst_node->swap_it->dma_addr = dma_addr;

@@ -38,7 +38,6 @@ static bool mali_has_reset_line(struct device_node *np)
 	return of_device_is_compatible(np, "allwinner,sun4i-a10-mali") ||
 		of_device_is_compatible(np, "allwinner,sun7i-a20-mali") ||
 		of_device_is_compatible(np, "allwinner,sun8i-h3-mali") ||
-		of_device_is_compatible(np, "allwinner,sun50i-a64-mali") ||
 		of_device_is_compatible(np, "allwinner,sun50i-h5-mali");
 }
 
@@ -90,6 +89,38 @@ struct resource *mali_create_mp2_resources(unsigned long address,
 	return res;
 }
 
+struct resource *mali_create_mali450_mp4_resources_nopmu(unsigned long address,
+							int irq_gp, int irq_gpmmu,
+							int irq_pp,
+							int irq_pp0, int irq_ppmmu0,
+							int irq_pp1, int irq_ppmmu1,
+							int irq_pp2, int irq_ppmmu2,
+							int irq_pp3, int irq_ppmmu3,
+							int *len)
+{
+	struct resource target[] = {
+		MALI_GPU_RESOURCES_MALI450_MP4(address,
+					irq_gp, irq_gpmmu,
+					irq_pp0, irq_ppmmu0,
+					irq_pp1, irq_ppmmu1,
+					irq_pp2, irq_ppmmu2,
+					irq_pp3, irq_ppmmu3,
+					irq_pp
+			)
+	};
+	struct resource *res;
+
+	res = kzalloc(sizeof(target), GFP_KERNEL);
+	if (!res)
+		return NULL;
+
+	memcpy(res, target, sizeof(target));
+
+	*len = ARRAY_SIZE(target);
+
+	return res;
+}
+
 struct resource *mali_create_mali450_mp4_resources(unsigned long address,
 						   int irq_gp, int irq_gpmmu,
 						   int irq_pp,
@@ -120,12 +151,45 @@ struct resource *mali_create_mali450_mp4_resources(unsigned long address,
 	return res;
 }
 
+#ifdef CONFIG_ARCH_MESON
+struct resource *mali_create_mali450_mp3_resources(unsigned long address,
+						   int irq_gp, int irq_gpmmu,
+						   int irq_pp,
+						   int irq_pp0, int irq_ppmmu0,
+						   int irq_pp1, int irq_ppmmu1,
+						   int irq_pp2, int irq_ppmmu2,
+						   int *len)
+{
+	struct resource target[] = {
+		MALI_GPU_RESOURCES_MALI450_MP3_PMU(address,
+						   irq_gp, irq_gpmmu,
+						   irq_pp0, irq_ppmmu0,
+						   irq_pp1, irq_ppmmu1,
+						   irq_pp2, irq_ppmmu2, irq_pp)
+	};
+	struct resource *res;
+
+	res = kzalloc(sizeof(target), GFP_KERNEL);
+	if (!res)
+		return NULL;
+
+	memcpy(res, target, sizeof(target));
+
+	*len = ARRAY_SIZE(target);
+
+	return res;
+}
+#endif
+
 static const struct of_device_id mali_dt_ids[] = {
 	{ .compatible = "allwinner,sun4i-a10-mali" },
 	{ .compatible = "allwinner,sun7i-a20-mali" },
 	{ .compatible = "allwinner,sun8i-h3-mali" },
-	{ .compatible = "allwinner,sun50i-a64-mali" },
 	{ .compatible = "allwinner,sun50i-h5-mali" },
+#ifdef CONFIG_ARCH_MESON
+        { .compatible = "amlogic,meson-gxbb-mali" },
+        { .compatible = "amlogic,meson-gxl-mali" },
+#endif
 	{ /* sentinel */ },
 };
 MODULE_DEVICE_TABLE(of, mali_dt_ids);
@@ -255,8 +319,8 @@ int mali_platform_device_register(void)
 		ret = (irq_pp3 < 0) ? irq_pp3 : irq_ppmmu3;
 		goto err_put_reset;
 	}
-
-	/*irq_pmu = of_irq_get_byname(np, "pmu");
+/*
+	irq_pmu = of_irq_get_byname(np, "pmu");
 	if (irq_pmu < 0) {
 		pr_err("Couldn't retrieve our PMU interrupt\n");
 		ret = irq_pmu;
@@ -282,7 +346,44 @@ int mali_platform_device_register(void)
 		goto err_free_mem_region;
 	}
 
-	if (of_device_is_compatible(np, "arm,mali-450") &&
+	if (of_device_is_compatible(np, "allwinner,sun50i-h5-mali") &&
+		(irq_pp >= 0) &&
+		(irq_pp2 >= 0) && (irq_ppmmu2 >= 0) &&
+		(irq_pp3 >= 0) && (irq_ppmmu3 >= 0))
+		mali_res = mali_create_mali450_mp4_resources_nopmu(res.start,
+								irq_gp, irq_gpmmu,
+								irq_pp,
+								irq_pp0, irq_ppmmu0,
+								irq_pp1, irq_ppmmu1,
+								irq_pp2, irq_ppmmu2,
+								irq_pp3, irq_ppmmu3,
+								&len);
+#ifdef CONFIG_ARCH_MESON
+	else if ((of_device_is_compatible(np, "amlogic,meson-gxbb-mali") ||
+			of_device_is_compatible(np, "amlogic,meson-gxl-mali")) &&
+		(irq_pp >= 0) &&
+		(irq_pp2 >= 0) && (irq_ppmmu2 >= 0)) {
+		static const struct mali_gpu_device_data mali_gpu_data_meson = {
+			.fb_start = 0x0,
+			.fb_size = 0xFFFFF000,
+			.shared_mem_size = 256 * 1024 * 1024,
+			.control_interval = 200, /* 1000ms */
+			.pmu_domain_config = {
+				0x1, 0x2, 0x4, 0x4, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x2, 0x0
+			},
+			.pmu_switch_delay = 0xFFFF,
+		};
+		memcpy(&mali_gpu_data, &mali_gpu_data_meson, sizeof(mali_gpu_data));
+		mali_res = mali_create_mali450_mp3_resources(res.start,
+							irq_gp, irq_gpmmu,
+							irq_pp,
+							irq_pp0, irq_ppmmu0,
+							irq_pp1, irq_ppmmu1,
+							irq_pp2, irq_ppmmu2,
+							&len);
+	}
+#endif
+	else if (of_device_is_compatible(np, "arm,mali-450") &&
 	    (irq_pp >= 0) &&
 	    (irq_pp2 >= 0) && (irq_ppmmu2 >= 0) &&
 	    (irq_pp3 >= 0) && (irq_ppmmu3 >= 0))
@@ -318,8 +419,6 @@ int mali_platform_device_register(void)
 	else if (of_device_is_compatible(np, "allwinner,sun7i-a20-mali") ||
 		 of_device_is_compatible(np, "allwinner,sun8i-a23-mali"))
 		clk_set_rate(mali->core_clk, 384000000);
-	else if (of_device_is_compatible(np, "allwinner,sun50i-a64-mali"))
-		clk_set_rate(mali->core_clk, 432000000);
 
 	clk_register_clkdev(mali->core_clk, "clk_mali", NULL);
 

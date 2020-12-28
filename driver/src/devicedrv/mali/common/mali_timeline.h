@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2018 ARM Limited. All rights reserved.
+ * Copyright (C) 2013-2016 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -114,13 +114,9 @@ struct mali_timeline_system {
 
 	_mali_osk_wait_queue_t         *wait_queue; /**< Wait queue. */
 
-#if defined(CONFIG_SYNC) || defined(CONFIG_SYNC_FILE)
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 6, 0)
+#if defined(CONFIG_SYNC)
 	struct sync_timeline           *signaled_sync_tl; /**< Special sync timeline used to create pre-signaled sync fences */
-#else
-	struct mali_internal_sync_timeline           *signaled_sync_tl; /**< Special sync timeline used to create pre-signaled sync fences */
-#endif
-#endif /* defined(CONFIG_SYNC) || defined(CONFIG_SYNC_FILE) */
+#endif /* defined(CONFIG_SYNC) */
 };
 
 /**
@@ -143,15 +139,11 @@ struct mali_timeline {
 	struct mali_timeline_system  *system;       /**< Timeline system this timeline belongs to. */
 	enum mali_timeline_id         id;           /**< Timeline type. */
 
-#if defined(CONFIG_SYNC) || defined(CONFIG_SYNC_FILE)
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 6, 0)
+#if defined(CONFIG_SYNC)
 	struct sync_timeline         *sync_tl;      /**< Sync timeline that corresponds to this timeline. */
-#else
-	struct mali_internal_sync_timeline *sync_tl;
-#endif
 	mali_bool destroyed;
 	struct mali_spinlock_reentrant *spinlock;       /**< Spin lock protecting the timeline system */
-#endif /* defined(CONFIG_SYNC) || defined(CONFIG_SYNC_FILE) */
+#endif /* defined(CONFIG_SYNC) */
 
 	/* The following fields are used to time out soft job trackers. */
 	_mali_osk_wq_delayed_work_t  *delayed_work;
@@ -191,20 +183,13 @@ struct mali_timeline_tracker {
 	struct mali_timeline_waiter   *waiter_head;
 	struct mali_timeline_waiter   *waiter_tail;
 
-#if defined(CONFIG_SYNC) || defined(CONFIG_SYNC_FILE)
+#if defined(CONFIG_SYNC)
 	/* These are only used if the tracker is waiting on a sync fence. */
 	struct mali_timeline_waiter   *waiter_sync; /**< A direct pointer to timeline waiter representing sync fence. */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 6, 0)
 	struct sync_fence_waiter       sync_fence_waiter; /**< Used to connect sync fence and tracker in sync fence wait callback. */
 	struct sync_fence             *sync_fence;   /**< The sync fence this tracker is waiting on. */
-#else
-	struct mali_internal_sync_fence_waiter       sync_fence_waiter; /**< Used to connect sync fence and tracker in sync fence wait callback. */
-	struct mali_internal_sync_fence             *sync_fence;   /**< The sync fence this tracker is waiting on. */
-#endif
 	_mali_osk_list_t               sync_fence_cancel_list; /**< List node used to cancel sync fence waiters. */
-	_mali_osk_list_t                sync_fence_signal_list; /** < List node used to singal sync fence callback function. */
-
-#endif /* defined(CONFIG_SYNC) || defined(CONFIG_SYNC_FILE) */
+#endif /* defined(CONFIG_SYNC) */
 
 #if defined(CONFIG_MALI_DMA_BUF_FENCE)
 	struct mali_timeline_waiter   *waiter_dma_fence; /**< A direct pointer to timeline waiter representing dma fence. */
@@ -304,31 +289,6 @@ MALI_STATIC_INLINE mali_bool mali_timeline_is_point_released(struct mali_timelin
 
 	return point_normalized > (next_normalized + MALI_TIMELINE_MAX_POINT_SPAN);
 }
-
-/**
- * Check if the tracker that the point relate to has been released.  A point is released if the tracker is not on the timeline.
- * @param timeline Timeline.
- * @param point Point on timeline.
- * @return MALI_TRUE if the tracker has been release, MALI_FALSE if not.
- */
-MALI_STATIC_INLINE mali_bool mali_timeline_is_tracker_released(struct mali_timeline *timeline, mali_timeline_point point)
-{
-	struct mali_timeline_tracker *tracker;
-	
-	MALI_DEBUG_ASSERT_POINTER(timeline);
-	MALI_DEBUG_ASSERT(MALI_TIMELINE_NO_POINT != point);
-
-	tracker = timeline->tracker_tail;
-
-	while (NULL != tracker) {
-		if (point == tracker->point)
-			return MALI_FALSE;
-		tracker = tracker->timeline_next;
-	}
-
-	return MALI_TRUE;
-}
-
 
 /**
  * Check if a point is valid.  A point is valid if is on the timeline or has been released.
@@ -506,7 +466,7 @@ MALI_STATIC_INLINE mali_bool mali_timeline_tracker_activation_error(
  */
 void mali_timeline_fence_copy_uk_fence(struct mali_timeline_fence *fence, _mali_uk_fence_t *uk_fence);
 
-_mali_osk_errcode_t mali_timeline_initialize(void);
+void mali_timeline_initialize(void);
 
 void mali_timeline_terminate(void);
 
