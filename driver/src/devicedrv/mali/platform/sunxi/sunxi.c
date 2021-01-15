@@ -194,6 +194,8 @@ static const struct of_device_id mali_dt_ids[] = {
 };
 MODULE_DEVICE_TABLE(of, mali_dt_ids);
 
+int sunxi_h5workaround_enable;
+
 int mali_platform_device_register(void)
 {
 	struct mali_gpu_device_data mali_gpu_data = {
@@ -349,7 +351,9 @@ int mali_platform_device_register(void)
 	if (of_device_is_compatible(np, "allwinner,sun50i-h5-mali") &&
 		(irq_pp >= 0) &&
 		(irq_pp2 >= 0) && (irq_ppmmu2 >= 0) &&
-		(irq_pp3 >= 0) && (irq_ppmmu3 >= 0))
+		(irq_pp3 >= 0) && (irq_ppmmu3 >= 0)) {
+		sunxi_h5workaround_enable = 1;
+		pr_info("H5 workaround enabled");
 		mali_res = mali_create_mali450_mp4_resources_nopmu(res.start,
 								irq_gp, irq_gpmmu,
 								irq_pp,
@@ -358,6 +362,7 @@ int mali_platform_device_register(void)
 								irq_pp2, irq_ppmmu2,
 								irq_pp3, irq_ppmmu3,
 								&len);
+	}
 #ifdef CONFIG_ARCH_MESON
 	else if ((of_device_is_compatible(np, "amlogic,meson-gxbb-mali") ||
 			of_device_is_compatible(np, "amlogic,meson-gxl-mali")) &&

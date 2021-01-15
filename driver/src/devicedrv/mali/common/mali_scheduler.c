@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2016 ARM Limited. All rights reserved.
+ * Copyright (C) 2012-2018 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -21,6 +21,7 @@
 #include <linux/wait.h>
 #include <linux/sched.h>
 #include "mali_pm_metrics.h"
+#include "mali_memory_virtual.h"
 
 #if defined(CONFIG_DMA_SHARED_BUFFER)
 #include "mali_memory_dma_buf.h"
@@ -713,7 +714,7 @@ void mali_scheduler_abort_session(struct mali_session_data *session)
 		mali_gp_job_signal_pp_tracker(gp_job, MALI_FALSE);
 		_mali_osk_list_delinit(&gp_job->list);
 		mali_scheduler_complete_gp_job(gp_job,
-					       MALI_FALSE, MALI_FALSE, MALI_TRUE);
+					       MALI_FALSE, MALI_TRUE, MALI_TRUE);
 	}
 
 	/* Release and complete non-running PP jobs */
@@ -722,7 +723,7 @@ void mali_scheduler_abort_session(struct mali_session_data *session)
 		mali_timeline_tracker_release(mali_pp_job_get_tracker(pp_job));
 		_mali_osk_list_delinit(&pp_job->list);
 		mali_scheduler_complete_pp_job(pp_job, 0,
-					       MALI_FALSE, MALI_TRUE);
+					       MALI_TRUE, MALI_TRUE);
 	}
 }
 
@@ -800,6 +801,277 @@ _mali_osk_errcode_t _mali_ukk_pp_start_job(void *ctx,
 	return ret;
 }
 
+#if defined(CONFIG_ARM64) && defined(CONFIG_ARCH_SUNXI)
+
+struct malivma {
+	u32 mali_base;
+	u32 vma_size;
+	u64 vma_base;
+};
+
+extern int sunxi_h5workaround_enable;
+
+static u32 *wrk_malifindptrbymaddr(const u32 zone_addr, struct malivma *const mv, const size_t n, size_t *const count, int *const segment, struct mali_session_data *const session)
+{
+	int i;
+
+	if (*count)
+		if (mv[*segment].mali_base <= zone_addr && zone_addr < mv[*segment].mali_base + mv[*segment].vma_size)
+			return (u32 *)(zone_addr - mv[*segment].mali_base + mv[*segment].vma_base);
+
+	for (i = 0; i < *count; i++)
+		if (mv[i].mali_base <= zone_addr && zone_addr < mv[i].mali_base + mv[i].vma_size) {
+			*segment = i;
+			return (u32 *)(zone_addr - mv[i].mali_base + mv[i].vma_base);
+		}
+
+	{
+		struct mali_vma_node *mali_vma_node = mali_vma_offset_search(&session->allocation_mgr, zone_addr, 0);
+
+		if (likely(mali_vma_node)) {
+			mali_mem_allocation *mali_alloc = container_of(mali_vma_node, struct mali_mem_allocation, mali_vma_node);
+			u32 *ptr;
+
+			if (*count < n)	{
+				mv[*count].mali_base = mali_vma_node->vm_node.start;
+				mv[*count].vma_size = mali_vma_node->vm_node.size;
+				mv[*count].vma_base = mali_alloc->cpu_mapping.vma->vm_start;
+				ptr = (u32 *)(zone_addr - mv[*count].mali_base + mv[*count].vma_base);
+				*segment = *count;
+				(*count)++;
+				return ptr;
+			} else {
+				return NULL;
+			}
+		}
+	}
+
+	return NULL;
+}
+
+static inline int wrk_malicheckrange(const u32 *const ptr, const struct malivma *const mv, const int segment, const int margin, const int line)
+{
+	const int ret = !ptr || (u32 *)mv[segment].vma_base > ptr || ptr >= (u32 *)(mv[segment].vma_base + mv[segment].vma_size - margin);
+
+	if (ret)
+		pr_debug("warning: %s, ptr = %p (0x%016llx - 0x%016llx, 0x%08x, line = %d) failed...\n", __func__, ptr, mv[segment].vma_base, mv[segment].vma_base + mv[segment].vma_size - margin, mv[segment].vma_size, line);
+
+	return ret;
+}
+
+struct stepstate {
+	u32 stepraw;
+	u32 stepm;
+	u32 steph;
+	u32 stepw;
+	u32 tilew;
+	u32 tileh;
+	u32 blocking;
+	u32 dlbur2;
+	u32 blocknum;
+	u32 stride;
+};
+
+struct malistep {
+	u32 stepw;
+	u32 steph;
+};
+
+static u32 compute_blocknum(const u32 stepw, const u32 steph, const u32 tilew, const u32 tileh)
+{
+	const u32 maskw = (1 << stepw) - 1;
+	const u32 maskh = (1 << steph) - 1;
+	const u32 maskt = (1 << (1 + stepw + steph)) - 1;
+
+	return ((((((tilew + maskw) & ~maskw) * ((tileh + maskh) & ~maskh))) + maskt) & ~maskt) >> (stepw + steph);
+}
+
+static void compute_steps_h5(const u32 tilew, const u32 tileh, struct stepstate *const o)
+{
+	static const struct malistep ms_h5[] = {
+		{ 0, 0, },
+		{ 1, 0, },
+		{ 0, 1, },
+		{ 1, 1, },
+		{ 1, 2, },
+		{ 2, 1, },
+		{ 2, 2, },
+		{ 2, 3, },
+		{ 3, 2, },
+	};
+	u32 blocknum;
+	int stepw = -1, steph = -1;
+	int stepm;
+	int k;
+
+	blocknum = compute_blocknum(ms_h5[0].stepw, ms_h5[0].steph, tilew, tileh);
+
+	if (blocknum <= 2048 && !(tilew == 256 && tileh <= 16)) {
+		stepw = ms_h5[0].stepw;
+		steph = ms_h5[0].steph;
+	}
+
+	for (k = 1; stepw < 0 && k < (int)(sizeof(ms_h5) / sizeof(*ms_h5)); k++) {
+		blocknum = compute_blocknum(ms_h5[k].stepw, ms_h5[k].steph, tilew, tileh);
+
+		if (blocknum <= 2048 &&
+		    (ms_h5[k].stepw == ms_h5[k].steph ||
+				(ms_h5[k].stepw == 1 && ms_h5[k].steph == 2 && (tilew - tileh == 1) && (tileh & 1) && tileh > 90 && tileh < 128) ||
+				(ms_h5[k].stepw == 2 && ms_h5[k].steph == 3 && tileh > 180 && tileh < 256 &&
+					(((tilew - tileh == 1) && (tileh & 3))  ||
+						((tilew - tileh == 2) && (tileh & 3) == 2) ||
+						((tilew - tileh == 2 || tilew - tileh == 3) && (tileh & 3) == 1))) ||
+				(ms_h5[k].stepw > ms_h5[k].steph && tilew  > tileh) ||
+				(ms_h5[k].stepw < ms_h5[k].steph && tilew <= tileh))) {
+			stepw = ms_h5[k].stepw;
+			steph = ms_h5[k].steph;
+			break;
+		}
+	}
+
+	if (stepw > steph)
+		stepm = steph;
+	else
+		stepm = stepw;
+
+	if (o) {
+		const u32 maskw = (1 << stepw) - 1;
+
+		o->tilew = tilew;
+		o->tileh = tileh;
+		o->stepw = stepw;
+		o->steph = steph;
+		o->stepm = stepm;
+		o->stepraw = (stepm << 28) | (steph << 16) | stepw;
+		o->blocking = o->stepraw;
+		o->dlbur2 = tilew == 256 ? 0 : (2 << 28) | (steph << 16) | stepw;
+		o->blocknum = blocknum;
+		o->stride = ((tilew + maskw) & ~maskw) >> stepw;
+	}
+}
+
+static int wrk_mali_h5_workaround(u32 *const dlbu_registers, u32 *const frame_registers, const u32 plbu_s, const u32 plbu_e, struct mali_session_data *const session)
+{
+	struct malivma mv[8];
+	int segment = 0;
+	size_t count = 0;
+	u32 wrk_plbu_blockstep[2];
+	u32 *wrk_plbu_blockstep_ptr = NULL;
+	struct stepstate wrk_stepstate = { .tilew = 0U, .tileh = 0U };
+	u32 rsw_renderstate[512];
+	int rsw_num = 0;
+
+	if (plbu_s && plbu_s != plbu_e) {
+		const u32 *const pl_plbu_stop_ptr = wrk_malifindptrbymaddr(plbu_e, mv, sizeof(mv) / sizeof(*mv), &count, &segment, session);
+		u32 *pl_plbu_ptr = NULL;
+		u32 pl_plbu[2];
+		u32 pl_jump = plbu_s;
+
+		if (wrk_malicheckrange(pl_plbu_stop_ptr, mv, segment, 0, __LINE__))
+			return -EFAULT;
+
+		do {
+			if (pl_jump) {
+				pl_plbu_ptr = wrk_malifindptrbymaddr(pl_jump, mv, sizeof(mv) / sizeof(*mv), &count, &segment, session);
+				pl_jump = 0;
+			}
+
+			if (wrk_malicheckrange(pl_plbu_ptr, mv, segment, sizeof(pl_plbu), __LINE__))
+				return -EFAULT;
+
+			if (copy_from_user(pl_plbu, pl_plbu_ptr, sizeof(pl_plbu)))
+				return -EFAULT;
+
+			switch (pl_plbu[1]) {
+			case 0x1000010c: // PLBU_CMD_BLOCK_STEP
+				if (wrk_plbu_blockstep_ptr)
+					pr_debug("error: %s, wrk_plbu_blockstep_ptr already assigned\n", __func__);
+
+				wrk_plbu_blockstep_ptr = pl_plbu_ptr;
+				wrk_plbu_blockstep[0] = pl_plbu[0];
+				wrk_plbu_blockstep[1] = pl_plbu[1];
+				break;
+			case 0x10000109:
+				if (wrk_stepstate.tilew || wrk_stepstate.tileh)
+					pr_debug("error: %s, wrk_stepstate.tilew and wrk_stepstate.tileh are already assigned\n", __func__);
+
+				{
+					const int tilew = (pl_plbu[0] >> 24) + 1;
+					const int tileh = ((pl_plbu[0] >> 8) & 0xffff) + 1;
+
+					if (tilew && tileh) {
+						compute_steps_h5(tilew, tileh, &wrk_stepstate);
+						wrk_plbu_blockstep[0] = wrk_stepstate.stepraw;
+
+						if (wrk_plbu_blockstep_ptr)
+							if (copy_to_user(wrk_plbu_blockstep_ptr, wrk_plbu_blockstep, sizeof(wrk_plbu_blockstep)))
+								return -EFAULT;
+					} else {
+						pr_debug("error: %s, tilew/tileh invalid\n", __func__);
+					}
+				}
+				break;
+			case 0x30000000:
+				if (wrk_stepstate.tilew && wrk_stepstate.tileh) {
+					pl_plbu[0] = wrk_stepstate.stride;
+
+					if (copy_to_user(pl_plbu_ptr, pl_plbu, sizeof(pl_plbu)))
+						return -EFAULT;
+				}
+				break;
+			case 0xf0000000:
+				pl_jump = pl_plbu[0];
+				break;
+			default:
+				if ((pl_plbu[1] & 0xf0000000) == 0x80000000) {
+					if (rsw_num < (int)(sizeof(rsw_renderstate) / sizeof(*rsw_renderstate)))
+						rsw_renderstate[rsw_num++] = pl_plbu[0];
+					else
+						pr_debug("error: %s, rsw_num overflow...\n", __func__);
+				} else if ((pl_plbu[1] & 0xf8000000) == 0x28000000) {
+					if (wrk_stepstate.tilew && wrk_stepstate.tileh) {
+						pl_plbu[1] = 0x28000000 | ((wrk_stepstate.blocknum - 1) & 0x07ffffff);
+
+						if (copy_to_user(pl_plbu_ptr, pl_plbu, sizeof(pl_plbu)))
+							return -EFAULT;
+					} else {
+						pr_err("warning: %s undefined state (0x%08x)...\n", __func__, pl_plbu[1]);
+					}
+				}
+				break;
+			}
+
+			pl_plbu_ptr += 2;
+		} while (pl_plbu_stop_ptr != pl_plbu_ptr);
+	}
+
+	if (wrk_stepstate.tilew && wrk_stepstate.tileh) {
+		int k;
+
+		for (k = 0; k < rsw_num; k++) {
+			u32 *rsw_ptr = wrk_malifindptrbymaddr(rsw_renderstate[k], mv, sizeof(mv) / sizeof(*mv), &count, &segment, session);
+			u32 aux0[1];
+
+			if (wrk_malicheckrange(rsw_ptr, mv, segment, 14 * sizeof(aux0), __LINE__))
+				return -EFAULT;
+
+			if (copy_from_user(aux0, rsw_ptr + 13, sizeof(aux0)))
+				return -EFAULT;
+
+			aux0[0] &= ~0x00001000;
+
+			if (copy_to_user(rsw_ptr + 13, aux0, sizeof(aux0)))
+				return -EFAULT;
+		}
+
+		dlbu_registers[2] =  wrk_stepstate.dlbur2;
+		frame_registers[20] =  wrk_stepstate.blocking;
+	}
+
+	return 0;
+}
+#endif
+
 _mali_osk_errcode_t _mali_ukk_pp_and_gp_start_job(void *ctx,
 		_mali_uk_pp_and_gp_start_job_s *uargs)
 {
@@ -825,6 +1097,13 @@ _mali_osk_errcode_t _mali_ukk_pp_and_gp_start_job(void *ctx,
 
 	pp_args = (_mali_uk_pp_start_job_s __user *)(uintptr_t)kargs.pp_args;
 	gp_args = (_mali_uk_gp_start_job_s __user *)(uintptr_t)kargs.gp_args;
+
+#if defined(CONFIG_ARM64) && defined(CONFIG_ARCH_SUNXI)
+	if (sunxi_h5workaround_enable) {
+		if (wrk_mali_h5_workaround(pp_args->dlbu_registers, pp_args->frame_registers, gp_args->frame_registers[2], gp_args->frame_registers[3], session))
+			pr_debug("warning: wrk_mali_h5_workaround failed...\n");
+	}
+#endif
 
 	pp_job = mali_pp_job_create(session, pp_args,
 				    mali_scheduler_get_new_id());

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2016 ARM Limited. All rights reserved.
+ * Copyright (C) 2011-2018 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -926,7 +926,7 @@ void mali_group_start_pp_job(struct mali_group *group, struct mali_pp_job *job, 
 
 	/* Reload the mmu page table if needed */
 	if ((MALI_TRUE == mali_pp_job_is_protected_job(job) && MALI_FALSE == gpu_secure_mode_pre_enabled)
-		||(MALI_FALSE == mali_pp_job_is_protected_job(job) && MALI_TRUE == gpu_secure_mode_pre_enabled)) {
+	    || (MALI_FALSE == mali_pp_job_is_protected_job(job) && MALI_TRUE == gpu_secure_mode_pre_enabled)) {
 		mali_group_reset(group);
 		mali_group_activate_page_directory(group, session, MALI_TRUE);
 	} else {
@@ -1304,7 +1304,7 @@ static void mali_group_activate_page_directory(struct mali_group *group, struct 
 
 	MALI_DEBUG_ASSERT_EXECUTOR_LOCK_HELD();
 
-	if (group->session != session ||MALI_TRUE == is_reload) {
+	if (group->session != session || MALI_TRUE == is_reload) {
 		/* Different session than last time, so we need to do some work */
 		MALI_DEBUG_PRINT(5, ("Mali group: Activate session: %08x previous: %08x on group %s\n",
 				     session, group->session,
@@ -1373,8 +1373,6 @@ u32 mali_group_dump_state(struct mali_group *group, char *buf, u32 size)
 {
 	int n = 0;
 	int i;
-	struct mali_group *child;
-	struct mali_group *temp;
 
 	if (mali_group_is_virtual(group)) {
 		n += _mali_osk_snprintf(buf + n, size - n,
@@ -1439,11 +1437,6 @@ u32 mali_group_dump_state(struct mali_group *group, char *buf, u32 size)
 					"\tPP running job: %p, subjob %d \n",
 					group->pp_running_job,
 					group->pp_running_sub_job);
-	}
-
-	_MALI_OSK_LIST_FOREACHENTRY(child, temp, &group->group_list,
-				    struct mali_group, group_list) {
-		n += mali_group_dump_state(child, buf + n, size - n);
 	}
 
 	return n;
@@ -1524,7 +1517,7 @@ _mali_osk_errcode_t mali_group_upper_half_mmu(void *data)
 					      MALI_PROFILING_EVENT_REASON_START_STOP_SW_UPPER_HALF,
 					      0, 0, /* No pid and tid for interrupt handler */
 					      MALI_PROFILING_MAKE_EVENT_DATA_CORE_GP_MMU(0),
-					      mali_mmu_get_rawstat(group->mmu), 0);
+					      0xFFFFFFFF, 0);
 	} else {
 		_mali_osk_profiling_add_event(MALI_PROFILING_EVENT_TYPE_STOP |
 					      MALI_PROFILING_EVENT_CHANNEL_SOFTWARE |
@@ -1532,7 +1525,7 @@ _mali_osk_errcode_t mali_group_upper_half_mmu(void *data)
 					      0, 0, /* No pid and tid for interrupt handler */
 					      MALI_PROFILING_MAKE_EVENT_DATA_CORE_PP_MMU(
 						      mali_pp_core_get_id(group->pp_core)),
-					      mali_mmu_get_rawstat(group->mmu), 0);
+					      0xFFFFFFFF, 0);
 	}
 #if defined(CONFIG_MALI_SHARED_INTERRUPTS)
 	mali_executor_unlock();
@@ -1555,7 +1548,7 @@ static void mali_group_bottom_half_mmu(void *data)
 					      MALI_PROFILING_EVENT_REASON_START_STOP_SW_BOTTOM_HALF,
 					      0, _mali_osk_get_tid(), /* pid and tid */
 					      MALI_PROFILING_MAKE_EVENT_DATA_CORE_GP_MMU(0),
-					      mali_mmu_get_rawstat(group->mmu), 0);
+					      0xFFFFFFFF, 0);
 	} else {
 		MALI_DEBUG_ASSERT_POINTER(group->pp_core);
 		_mali_osk_profiling_add_event(MALI_PROFILING_EVENT_TYPE_START |
@@ -1564,7 +1557,7 @@ static void mali_group_bottom_half_mmu(void *data)
 					      0, _mali_osk_get_tid(), /* pid and tid */
 					      MALI_PROFILING_MAKE_EVENT_DATA_CORE_PP_MMU(
 						      mali_pp_core_get_id(group->pp_core)),
-					      mali_mmu_get_rawstat(group->mmu), 0);
+					      0xFFFFFFFF, 0);
 	}
 
 	mali_executor_interrupt_mmu(group, MALI_FALSE);
@@ -1575,7 +1568,7 @@ static void mali_group_bottom_half_mmu(void *data)
 					      MALI_PROFILING_EVENT_REASON_START_STOP_SW_BOTTOM_HALF,
 					      0, _mali_osk_get_tid(), /* pid and tid */
 					      MALI_PROFILING_MAKE_EVENT_DATA_CORE_GP_MMU(0),
-					      mali_mmu_get_rawstat(group->mmu), 0);
+					      0xFFFFFFFF, 0);
 	} else {
 		_mali_osk_profiling_add_event(MALI_PROFILING_EVENT_TYPE_STOP |
 					      MALI_PROFILING_EVENT_CHANNEL_SOFTWARE |
@@ -1583,7 +1576,7 @@ static void mali_group_bottom_half_mmu(void *data)
 					      0, _mali_osk_get_tid(), /* pid and tid */
 					      MALI_PROFILING_MAKE_EVENT_DATA_CORE_PP_MMU(
 						      mali_pp_core_get_id(group->pp_core)),
-					      mali_mmu_get_rawstat(group->mmu), 0);
+					      0xFFFFFFFF, 0);
 	}
 }
 
@@ -1641,7 +1634,7 @@ _mali_osk_errcode_t mali_group_upper_half_gp(void *data)
 				      MALI_PROFILING_EVENT_REASON_START_STOP_SW_UPPER_HALF,
 				      0, 0, /* No pid and tid for interrupt handler */
 				      MALI_PROFILING_MAKE_EVENT_DATA_CORE_GP(0),
-				      mali_gp_get_rawstat(group->gp_core), 0);
+				      0xFFFFFFFF, 0);
 #if defined(CONFIG_MALI_SHARED_INTERRUPTS)
 	mali_executor_unlock();
 #endif
@@ -1662,7 +1655,7 @@ static void mali_group_bottom_half_gp(void *data)
 				      MALI_PROFILING_EVENT_REASON_START_STOP_SW_BOTTOM_HALF,
 				      0, _mali_osk_get_tid(), /* pid and tid */
 				      MALI_PROFILING_MAKE_EVENT_DATA_CORE_GP(0),
-				      mali_gp_get_rawstat(group->gp_core), 0);
+				      0xFFFFFFFF, 0);
 
 	mali_executor_interrupt_gp(group, MALI_FALSE);
 
@@ -1671,7 +1664,7 @@ static void mali_group_bottom_half_gp(void *data)
 				      MALI_PROFILING_EVENT_REASON_START_STOP_SW_BOTTOM_HALF,
 				      0, _mali_osk_get_tid(), /* pid and tid */
 				      MALI_PROFILING_MAKE_EVENT_DATA_CORE_GP(0),
-				      mali_gp_get_rawstat(group->gp_core), 0);
+				      0xFFFFFFFF, 0);
 }
 
 _mali_osk_errcode_t mali_group_upper_half_pp(void *data)
@@ -1733,7 +1726,7 @@ _mali_osk_errcode_t mali_group_upper_half_pp(void *data)
 				      0, 0, /* No pid and tid for interrupt handler */
 				      MALI_PROFILING_MAKE_EVENT_DATA_CORE_PP(
 					      mali_pp_core_get_id(group->pp_core)),
-				      mali_pp_get_rawstat(group->pp_core), 0);
+				      0xFFFFFFFF, 0);
 #if defined(CONFIG_MALI_SHARED_INTERRUPTS)
 	mali_executor_unlock();
 #endif
@@ -1755,7 +1748,7 @@ static void mali_group_bottom_half_pp(void *data)
 				      0, _mali_osk_get_tid(), /* pid and tid */
 				      MALI_PROFILING_MAKE_EVENT_DATA_CORE_PP(
 					      mali_pp_core_get_id(group->pp_core)),
-				      mali_pp_get_rawstat(group->pp_core), 0);
+				      0xFFFFFFFF, 0);
 
 	mali_executor_interrupt_pp(group, MALI_FALSE);
 
@@ -1765,7 +1758,7 @@ static void mali_group_bottom_half_pp(void *data)
 				      0, _mali_osk_get_tid(), /* pid and tid */
 				      MALI_PROFILING_MAKE_EVENT_DATA_CORE_PP(
 					      mali_pp_core_get_id(group->pp_core)),
-				      mali_pp_get_rawstat(group->pp_core), 0);
+				      0xFFFFFFFF, 0);
 }
 
 static void mali_group_timeout(struct timer_list *t)

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2016 ARM Limited. All rights reserved.
+ * Copyright (C) 2011-2018 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -27,7 +27,6 @@
 #endif
 #if defined(CONFIG_MALI_DMA_BUF_FENCE)
 #include "linux/mali_dma_fence.h"
-#include <linux/fence.h>
 #endif
 
 typedef enum pp_job_status {
@@ -89,6 +88,7 @@ struct mali_pp_job {
 	 */
 	_mali_osk_list_t list;                             /**< Used to link jobs together in the scheduler queue */
 	_mali_osk_list_t session_fb_lookup_list;           /**< Used to link jobs together from the same frame builder in the session */
+
 	u32 sub_jobs_started;                              /**< Total number of sub-jobs started (always started in ascending order) */
 
 	/*
@@ -101,7 +101,11 @@ struct mali_pp_job {
 
 #if defined(CONFIG_MALI_DMA_BUF_FENCE)
 	struct mali_dma_fence_context dma_fence_context; /**< The mali dma fence context to record dma fence waiters that this job wait for */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+	struct dma_fence *rendered_dma_fence; /**< the new dma fence link to this job */
+#else
 	struct fence *rendered_dma_fence; /**< the new dma fence link to this job */
+#endif
 #endif
 };
 

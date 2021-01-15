@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2014, 2016 ARM Limited. All rights reserved.
+ * Copyright (C) 2010-2014, 2016-2018 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -13,7 +13,13 @@
 #include <linux/cdev.h>              /* character device definitions */
 #include <linux/ioport.h>            /* request_mem_region */
 #include <linux/mm.h>                /* memory management functions and types */
-#include <asm/uaccess.h>             /* user space access */
+#include <linux/version.h>
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,12,0)
+#include <linux/uaccess.h>
+#else
+#include <asm/uaccess.h>
+#endif
 #include <asm/atomic.h>
 #include <linux/device.h>
 #include <linux/debugfs.h>
@@ -410,13 +416,7 @@ static int ump_file_mmap(struct file *filp, struct vm_area_struct *vma)
 	args.size = vma->vm_end - vma->vm_start;
 	args._ukk_private = vma;
 	args.secure_id = vma->vm_pgoff;
-	args.is_cached = 0;
 
-	if (!(vma->vm_flags & VM_SHARED)) {
-		args.is_cached = 1;
-		vma->vm_flags = vma->vm_flags | VM_SHARED | VM_MAYSHARE  ;
-		DBG_MSG(3, ("UMP Map function: Forcing the CPU to use cache\n"));
-	}
 	/* By setting this flag, during a process fork; the child process will not have the parent UMP mappings */
 	vma->vm_flags |= VM_DONTCOPY;
 
